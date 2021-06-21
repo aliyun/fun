@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('fs-extra');
+const path = require('path');
 const ram = require('../ram');
 const debug = require('debug')('fun:deploy');
 const promiseRetry = require('../retry');
@@ -9,6 +10,11 @@ const getProfile = require('../profile').getProfile;
 const { green, red } = require('colors');
 const { processApiParameters } = require('./deploy-support-api');
 const { getCloudApiClient, getSlsClient, getMnsClient } = require('../client');
+
+const EXPECTED_RSA_PRIVATE_KEY_PREFIX = '-----BEGIN RSA PRIVATE KEY-----';
+const EXPECTED_RSA_PRIVATE_KEY_SUFFIX = '-----END RSA PRIVATE KEY-----';
+const EXPECTED_CERTIFICATE_PREFIX = '-----BEGIN CERTIFICATE-----';
+const EXPECTED_CERTIFICATE_SUFFIX = '-----END CERTIFICATE-----';
 
 const {
   getOtsClient,
@@ -250,12 +256,48 @@ async function makeCustomDomain({
     let privateKey = certConfig.PrivateKey;
     let certificate = certConfig.Certificate;
 
-    if (privateKey && privateKey.endsWith('.pem')) {
-      certConfig.PrivateKey = await fs.readFile(privateKey, 'utf-8');
-    }
-    if (certificate && certificate.endsWith('.pem')) {
-      certConfig.Certificate = await fs.readFile(certificate, 'utf-8');
-    }
+    if (privateKey) {
+      //region resolve RSA private key content
+      let p = path.resolve(__dirname, privateKey);
+      // private key is provided by local file
+      if (fs.pathExistsSync(p)) {
+        certConfig.PrivateKey = await fs.readFile(p, 'utf-8');
+      } // or it is hardcoded
+      //endregion
+
+      //region validate RSA private key content
+      if (!certConfig.PrivateKey.startsWith(EXPECTED_RSA_PRIVATE_KEY_PREFIX) || !certConfig.PrivateKey.endsWith(EXPECTED_RSA_PRIVATE_KEY_SUFFIX)) {
+        throw new Error(red(`
+        Please provide a valid PEM encoded RSA private key for ${domainName}.
+        It's content MUST start with "${EXPECTED_RSA_PRIVATE_KEY_PREFIX}" AND end with "${EXPECTED_RSA_PRIVATE_KEY_SUFFIX}".
+        
+        See:
+        http://fileformats.archiveteam.org/wiki/PEM_encoded_RSA_private_key`));
+      }
+      //endregion
+    } // private key is not provided
+
+    if (certificate) {
+      //region resolve certificate content
+      let p = path.resolve(__dirname, certificate);
+      // certificate is provided by local file
+      if (fs.pathExistsSync(p)) {
+        certConfig.Certificate = await fs.readFile(p, 'utf-8');
+      } // or it is hardcoded
+      //endregion
+
+      //region validate certificate content
+      if (!certConfig.Certificate.startsWith(EXPECTED_CERTIFICATE_PREFIX) || !certConfig.Certificate.endsWith(EXPECTED_CERTIFICATE_SUFFIX)) {
+        throw new Error(red(`
+        Please provide a valid PEM encoded certificate for ${domainName}.
+        It's content MUST start with "${EXPECTED_CERTIFICATE_PREFIX}" AND end with "${EXPECTED_CERTIFICATE_SUFFIX}".
+        
+        See:
+        http://fileformats.archiveteam.org/wiki/PEM_encoded_certificate`));
+      }
+      //endregion
+    } // certificate is not provided
+
     Object.assign(options, {
       certConfig
     });
